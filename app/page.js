@@ -1,103 +1,226 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import "./globals.css";
+import RecentSearch from "./components/RecentSearch";
+import QuestionAnswer from "./components/QuestionAnswer";
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.js
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [question, setQuestion] = useState("");
+  const [result, setResult] = useState([]);
+  const [recentHistory, setRecentHistory] = useState([]);
+  const [selectedHistory, setSelectedHistory] = useState("");
+  const scrollToAns = useRef();
+  const [loader, setLoader] = useState(false);
+  const [darkMode, setDarkMode] = useState("dark");
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  const fetchHistory = async () => {
+    try {
+      const res = await fetch("/api/history");
+      if (!res.ok) throw new Error("Failed to fetch history");
+      const data = await res.json();
+      setRecentHistory(data);
+    } catch (err) {
+      console.error("Error fetching history:", err);
+    }
+  };
+
+  const deleteHistory = async (id) => {
+    try {
+      const res = await fetch(`/api/history/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setRecentHistory((prev) => prev.filter((item) => item._id !== id));
+      }
+    } catch (err) {
+      console.error("Delete Error:", err);
+    }
+  };
+
+const saveHistory = async (question, answer) => {
+  try {
+    await fetch("/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, answer }),
+    });
+    fetchHistory();
+  } catch (err) {
+    console.error("Save History Error:", err);
+  }
+};
+
+const askQuestion = async () => {
+  if (!question && !selectedHistory) return;
+
+  const payloadData = question ? question : selectedHistory;
+
+  setLoader(true);
+  try {
+    const payload = {
+      contents: [{ parts: [{ text: payloadData }] }],
+    };
+
+    const response = await fetch("/api/your-ai-endpoint", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    let answerText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "No answer";
+
+    // ✅ Clean Answer: Remove unwanted '*' and markdown symbols
+    const cleanAnswer = answerText
+      .replace(/^\s*\*\s*/gm, "\n") // Remove bullets
+      .replace(/\*\*(.*?)\*\*/g, "$1") // Remove bold markdown (optional)
+      .replace(/\*/g, "\n\n\n"); // Remove stray * if needed
+
+    setResult((prev) => [
+      ...prev,
+      { type: "q", text: payloadData },
+      { type: "a", text: cleanAnswer },
+    ]);
+
+    setQuestion("");
+    // ✅ Save both Question & Answer to MongoDB
+        await fetch("/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: payloadData, answer: answerText }),
+    });
+
+     await fetchHistory();
+
+    
+
+    setTimeout(() => {
+      if (scrollToAns.current) {
+        scrollToAns.current.scrollTo({
+          top: scrollToAns.current.scrollHeight,
+          behavior: "smooth",
+        });
+      }
+    }, 500);
+  } catch (err) {
+    console.error("API Error:", err);
+  } finally {
+    setLoader(false);
+  }
+};
+
+
+
+  const handleEnter = (e) => {
+    if (e.key === "Enter") askQuestion();
+  };
+
+  useEffect(() => {
+    fetchHistory();
+  }, []);
+
+  useEffect(() => {
+    if (selectedHistory) askQuestion();
+  }, [selectedHistory]);
+
+  return (
+    <div className={darkMode === "dark" ? "dark" : ""}>
+      <div className="grid grid-cols-5 h-screen text-white bg-gray-900">
+        {/* Sidebar */}
+        <div className="col-span-1 bg-gray-800 p-4 flex flex-col">
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-semibold">Recent Search</h2>
+          </div>
+          <ul>
+            {recentHistory.map((item) => (
+              <li
+                key={item._id}
+                className="flex justify-between items-center mb-2"
+              >
+                <span
+                  onClick={() => setSelectedHistory(item.question)}
+                  className="cursor-pointer hover:text-blue-500"
+                >
+                  {item.question}
+                </span>
+                <button
+                  onClick={() => deleteHistory(item._id)}
+                  className="text-red-400 hover:text-red-600 ml-2 cursor-pointer"
+                >
+                  🗑️
+                </button>
+              </li>
+            ))}
+          </ul>
+          <select
+            onChange={(e) => setDarkMode(e.target.value)}
+            value={darkMode}
+            className="mt-auto bg-gray-700 text-white p-2 rounded"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        {/* Main Section */}
+        <div className="col-span-4 p-10 flex flex-col">
+          <h1 className="text-4xl text-center mb-8 bg-clip-text text-transparent bg-gradient-to-r from-purple-600 to-pink-500">
+            Hello User, Ask me Anything
+          </h1>
+
+          {loader && (
+            <div role="status" className="my-4 flex justify-center">
+              <div className="w-8 h-8 border-4 border-dashed border-purple-600 rounded-full animate-spin"></div>
+            </div>
+          )}
+
+          {/* Chat Section */}
+         <div
+  ref={scrollToAns}
+  className="flex-grow overflow-y-auto p-4 space-y-4 overflow-x-auto"
+  style={{ maxHeight: "calc(100vh - 300px)" }}
+>
+
+            <ul>
+              {result.map((item, index) => (
+                <li
+                  key={index}
+                  className={`flex ${
+                    item.type === "q" ? "justify-end" : "justify-start"
+                  }`}
+                >
+                  <div
+                    className={`p-3 rounded-lg ${
+                      item.type === "q"
+                        ? "bg-gray-700 text-white"
+                        : "bg-transparent text-white"  
+                    }`}
+                  >
+                    <QuestionAnswer item={item} index={index} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Chat Input */}
+          <div className="bg-gray-800 rounded-full flex p-2 mt-25  sticky">
+            <input
+              type="text"
+              value={question}
+              onKeyDown={handleEnter}
+              onChange={(e) => setQuestion(e.target.value)}
+              placeholder="Ask me anything"
+              className="flex-grow bg-transparent text-white p-3 outline-none"
+            />
+            <button
+              onClick={askQuestion}
+              className="bg-purple-600 hover:bg-purple-700 text-white px-6 rounded-full"
+            >
+              Ask
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
